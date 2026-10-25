@@ -428,7 +428,7 @@ def materials_section(subject, unit, topic, admin):
             if m.get("size"):
                 col_name.caption(human_size(m["size"]))
             try:
-                col_open.link_button("Open", file_url(m["file"]))
+                col_open.link_button("Open", m.get("url") or file_url(m["file"]))
             except Exception:
                 col_open.caption("Unavailable")
 
@@ -448,39 +448,56 @@ def materials_section(subject, unit, topic, admin):
         if flash:
             st.warning(flash)
 
+       material_type = st.radio("What do you want to add?", ["📁 Upload Files", "🔗 Add a Web Link"], key=f"type_{prefix}")
+
+    if material_type == "📁 Upload Files":
         with st.form(f"form_files_{prefix}", clear_on_submit=True):
             files = st.file_uploader(
                 "Add files (PDF, Word, PowerPoint, Excel, text, images)",
                 accept_multiple_files=True,
                 type=ALLOWED_TYPES,
-                key=f"files_{prefix}",
+                key=f"files_{prefix}"
             )
             submitted = st.form_submit_button("Upload")
+            
+            if submitted:
+                if not files:
+                    st.session_state["flash_files"] = "Choose at least one file first."
+                    st.rerun(scope="fragment")
+                else:
+                    added, failed = 0, []
+                    for upload in files:
+                        safe_name = re.sub(r"[^A-Za-z0-9_.-]", "_", upload.name)
+                        stored_name = f"{uuid.uuid4().hex[:8]}_{safe_name}"
+                        blob = upload.getvalue()
+                        try:
+                            run(lambda c: c.storage.from_(BUCKET).upload(stored_name, blob))
+                        except Exception:
+                            failed.append(upload.name)
+                            continue
+                        materials.append({"name": upload.name, "file": stored_name, "size": len(blob)})
+                        added += 1
+                    
+                    if added:
+                        save_data(data)
+                    if failed:
+                        st.session_state["flash_files"] = "Could not upload: " + ", ".join(failed) + ". Files over about 50 MB can be rejected on the free plan."
+                    st.rerun(scope="fragment")
 
-        if submitted:
-            if not files:
-                st.session_state["flash_files"] = "Choose at least one file first."
-            else:
-                added, failed = 0, []
-                for upload in files:
-                    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", upload.name)
-                    stored_name = f"{uuid.uuid4().hex[:8]}_{safe_name}"
-                    blob = upload.getvalue()
-                    try:
-                        run(lambda c: c.storage.from_(BUCKET).upload(stored_name, blob))
-                    except Exception:
-                        failed.append(upload.name)
-                        continue
-                    materials.append({"name": upload.name, "file": stored_name, "size": len(blob)})
-                    added += 1
-                if added:
+    else:
+        with st.form(f"form_link_{prefix}", clear_on_submit=True):
+            link_name = st.text_input("Title of the link (e.g., 'Unit 1 Notes Drive Link'):")
+            link_url = st.text_input("Paste the URL here:")
+            submitted_link = st.form_submit_button("Save Link")
+            
+            if submitted_link:
+                if not link_name or not link_url:
+                    st.session_state["flash_files"] = "Please provide both a title and a URL."
+                else:
+                    materials.append({"name": link_name, "url": link_url})
                     save_data(data)
-                if failed:
-                    st.session_state["flash_files"] = (
-                        "Could not upload: " + ", ".join(failed)
-                        + ". Files over about 50 MB can be rejected on the free plan."
-                    )
-            st.rerun(scope="fragment")
+                st.rerun(scope="fragment")
+                   
 
 
 # ---------- App ----------
